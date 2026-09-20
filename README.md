@@ -28,8 +28,10 @@ Convert an export directory to MDict `.mdx`/`.mdd` files with
 
 The converter rewrites Apple Dictionary cross-references as MDict `entry://`
 links, adds kana reading aliases for Japanese entries, and packages stylesheets,
-images, and other display resources into a companion `.mdd`. Existing output
-files require `--force` to replace.
+images, and other display resources into a companion `.mdd`. Apple-only system
+colors are translated to portable CSS variables, and a small compatibility
+stylesheet restores semantic labels such as boxed language names in GoldenDict.
+Existing output files require `--force` to replace.
 
 Audit exported XML, configured stylesheets, record references, and anchors
 without packing any files:

@@ -45,6 +45,52 @@ DISPLAY_RESOURCE_EXTENSIONS = {
     ".svg",
     ".xsl",
 }
+COMPATIBILITY_STYLESHEET = "_AppleDictionaryCompat.css"
+APPLE_CSS_REPLACEMENTS = {
+    "-apple-system-label": "var(--apple-dictionary-label, #1d1d1f)",
+    "-apple-system-secondary-label": (
+        "var(--apple-dictionary-secondary-label, #6e6e73)"
+    ),
+    "-apple-system-tertiary-label": (
+        "var(--apple-dictionary-tertiary-label, #8e8e93)"
+    ),
+    "-apple-system-text-background": (
+        "var(--apple-dictionary-text-background, #ffffff)"
+    ),
+    "-webkit-link": "var(--apple-dictionary-link, #0066cc)",
+}
+COMPATIBILITY_CSS = """\
+:root {
+  color-scheme: light dark;
+  --apple-dictionary-label: #1d1d1f;
+  --apple-dictionary-secondary-label: #6e6e73;
+  --apple-dictionary-tertiary-label: #8e8e93;
+  --apple-dictionary-text-background: #ffffff;
+  --apple-dictionary-link: #0066cc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --apple-dictionary-label: #f5f5f7;
+    --apple-dictionary-secondary-label: #aeaeb2;
+    --apple-dictionary-tertiary-label: #8e8e93;
+    --apple-dictionary-text-background: #1c1c1e;
+    --apple-dictionary-link: #2997ff;
+  }
+}
+
+span.oup_label {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: 0.25em;
+  padding: 0 0.3em;
+  margin-right: 0.3em;
+  font-style: normal;
+  font-size: 72%;
+  line-height: 1.25;
+  vertical-align: 0.08em;
+}
+"""
 
 
 class ConversionError(Exception):
@@ -327,6 +373,7 @@ def configured_stylesheets(resources_directory: Path) -> tuple[str, ...]:
 
 def stylesheet_links(resources_directory: Path) -> str:
     stylesheets = configured_stylesheets(resources_directory)
+    stylesheets += (COMPATIBILITY_STYLESHEET,)
     return "".join(
         f'<link rel="stylesheet" href="{html.escape(stylesheet, quote=True)}">'
         for stylesheet in stylesheets
@@ -426,7 +473,11 @@ def copy_display_resources(source: Path, destination: Path) -> int:
     if not source.is_dir():
         return 0
 
-    copied = 0
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / COMPATIBILITY_STYLESHEET).write_text(
+        COMPATIBILITY_CSS, encoding="utf-8"
+    )
+    copied = 1
     for resource in sorted(source.rglob("*")):
         if not resource.is_file():
             continue
@@ -438,7 +489,13 @@ def copy_display_resources(source: Path, destination: Path) -> int:
 
         output_path = destination / relative_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(resource, output_path)
+        if resource.suffix.lower() == ".css":
+            css = resource.read_text(encoding="utf-8")
+            for apple_value, portable_value in APPLE_CSS_REPLACEMENTS.items():
+                css = css.replace(apple_value, portable_value)
+            output_path.write_text(css, encoding="utf-8")
+        else:
+            shutil.copyfile(resource, output_path)
         copied += 1
     return copied
 

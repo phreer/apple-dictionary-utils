@@ -6,9 +6,11 @@ import unittest
 from pathlib import Path
 
 from convert_to_mdict import (
+    COMPATIBILITY_STYLESHEET,
     ConversionError,
     audit_dictionary,
     configured_stylesheets,
+    copy_display_resources,
     convert_link,
     convert_links,
     parse_entry_data,
@@ -70,8 +72,30 @@ class StylesheetTests(unittest.TestCase):
             self.assertEqual(configured_stylesheets(resources), ("DefaultStyle.css",))
             self.assertEqual(
                 stylesheet_links(resources),
-                '<link rel="stylesheet" href="DefaultStyle.css">',
+                '<link rel="stylesheet" href="DefaultStyle.css">'
+                f'<link rel="stylesheet" href="{COMPATIBILITY_STYLESHEET}">',
             )
+
+    def test_resources_include_portable_apple_styles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = root / "source"
+            destination = root / "destination"
+            resources.mkdir()
+            (resources / "DefaultStyle.css").write_text(
+                "span { color: -apple-system-secondary-label; }",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(copy_display_resources(resources, destination), 2)
+            converted = (destination / "DefaultStyle.css").read_text(encoding="utf-8")
+            compatibility = (destination / COMPATIBILITY_STYLESHEET).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("var(--apple-dictionary-secondary-label", converted)
+            self.assertNotIn("color: -apple-system-secondary-label", converted)
+            self.assertIn("span.oup_label", compatibility)
+            self.assertIn("border: 1px solid currentColor", compatibility)
 
     def test_missing_configured_stylesheet_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
