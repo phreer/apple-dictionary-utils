@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local build products and generated dictionary data.
+dedict
+strip
+export-result/
+mdict-result/
