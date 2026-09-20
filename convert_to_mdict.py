@@ -15,12 +15,15 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Iterator, Sequence
+from typing import Any, BinaryIO, Iterator, Sequence
 from xml.etree import ElementTree
 
 
 DICTIONARY_NAMESPACE = "http://www.apple.com/DTDs/DictionaryService-1.0.rng"
 TITLE_ATTRIBUTE = f"{{{DICTIONARY_NAMESPACE}}}title"
+PRONUNCIATION_ATTRIBUTE = f"{{{DICTIONARY_NAMESPACE}}}prn"
+XML_LANG_ATTRIBUTE = "{http://www.w3.org/XML/1998/namespace}lang"
+KANA = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
 X_DICTIONARY_LINK = re.compile(
     r'href\s*=\s*(?:"(?P<double>x-dictionary:[^"]+)"|'
     r"'(?P<single>x-dictionary:[^']+)')"
@@ -56,6 +59,16 @@ class ReferenceLink:
     dictionary_identifier: str | None = None
     fallback_title: str | None = None
     anchor: str | None = None
+
+
+@dataclass(frozen=True)
+class ParsedEntry:
+    """Metadata needed to turn one Apple Dictionary entry into MDict records."""
+
+    title: str
+    entry_id: str | None
+    used_fallback_title: bool
+    reading_aliases: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -136,9 +149,31 @@ def entry_title(root: ElementTree.Element) -> tuple[str, bool]:
     raise ConversionError("entry has neither a title nor an id")
 
 
-def parse_entry(
-    xml: str, source: Path, line_number: int
-) -> tuple[str, str | None, bool]:
+def entry_reading_aliases(
+    root: ElementTree.Element, title: str
+) -> tuple[str, ...]:
+    language = root.get(XML_LANG_ATTRIBUTE) or root.get("lang", "")
+    if not language.lower().startswith("ja"):
+        return ()
+
+    aliases = []
+    seen = set()
+    for element in root.iter():
+        if "hw" not in element.get("class", "").split():
+            continue
+        if PRONUNCIATION_ATTRIBUTE not in element.attrib:
+            continue
+        alias = element_text_with_image_alts(element)
+        if not alias or alias == title or not KANA.search(alias) or alias in seen:
+            continue
+        if "\n" in alias or "\r" in alias:
+            raise ConversionError(f"multiline reading alias: {alias!r}")
+        aliases.append(alias)
+        seen.add(alias)
+    return tuple(aliases)
+
+
+def parse_entry_data(xml: str, source: Path, line_number: int) -> ParsedEntry:
     try:
         root = ElementTree.fromstring(xml)
     except ElementTree.ParseError as error:
@@ -152,7 +187,19 @@ def parse_entry(
         raise ConversionError(f"{error} in {source} at line {line_number}") from error
     if "\n" in title or "\r" in title:
         raise ConversionError(f"multiline title in {source} at line {line_number}")
-    return title, root.get("id"), used_fallback
+    return ParsedEntry(
+        title=title,
+        entry_id=root.get("id"),
+        used_fallback_title=used_fallback,
+        reading_aliases=entry_reading_aliases(root, title),
+    )
+
+
+def parse_entry(
+    xml: str, source: Path, line_number: int
+) -> tuple[str, str | None, bool]:
+    entry = parse_entry_data(xml, source, line_number)
+    return entry.title, entry.entry_id, entry.used_fallback_title
 
 
 def build_entry_id_map(xml_path: Path) -> dict[str, str]:
@@ -162,17 +209,17 @@ def build_entry_id_map(xml_path: Path) -> dict[str, str]:
             xml = line.strip()
             if not xml:
                 continue
-            title, entry_id, _ = parse_entry(xml, xml_path, line_number)
-            if not entry_id:
+            entry = parse_entry_data(xml, xml_path, line_number)
+            if not entry.entry_id:
                 raise ConversionError(
                     f"entry has no id in {xml_path} at line {line_number}"
                 )
-            if entry_id in entry_ids:
+            if entry.entry_id in entry_ids:
                 raise ConversionError(
-                    f"duplicate entry id {entry_id!r} in {xml_path} "
+                    f"duplicate entry id {entry.entry_id!r} in {xml_path} "
                     f"at line {line_number}"
                 )
-            entry_ids[entry_id] = title
+            entry_ids[entry.entry_id] = entry.title
     return entry_ids
 
 
@@ -335,11 +382,19 @@ def audit_dictionary(xml_path: Path, resources_directory: Path) -> DictionaryAud
 
 def write_mdict_source(
     xml_path: Path, source_path: Path, resources_directory: Path
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     entry_ids = build_entry_id_map(xml_path)
+    primary_titles = set(entry_ids.values())
     stylesheets = stylesheet_links(resources_directory)
     entry_count = 0
     fallback_title_count = 0
+    reading_aliases: set[tuple[str, str]] = set()
+
+    def write_record(mdict_source: BinaryIO, key: str, record: str) -> None:
+        mdict_source.write(key.encode("utf-8"))
+        mdict_source.write(b"\r\n")
+        mdict_source.write(record.encode("utf-8"))
+        mdict_source.write(b"\r\n</>\r\n")
 
     with xml_path.open("r", encoding="utf-8") as xml_file, source_path.open(
         "wb"
@@ -348,16 +403,19 @@ def write_mdict_source(
             xml = line.strip()
             if not xml:
                 continue
-            title, _, used_fallback = parse_entry(xml, xml_path, line_number)
+            entry = parse_entry_data(xml, xml_path, line_number)
             record = stylesheets + convert_links(xml, entry_ids)
-            mdict_source.write(title.encode("utf-8"))
-            mdict_source.write(b"\r\n")
-            mdict_source.write(record.encode("utf-8"))
-            mdict_source.write(b"\r\n</>\r\n")
+            write_record(mdict_source, entry.title, record)
+            for alias in entry.reading_aliases:
+                if alias not in primary_titles:
+                    reading_aliases.add((alias, entry.title))
             entry_count += 1
-            fallback_title_count += used_fallback
+            fallback_title_count += entry.used_fallback_title
 
-    return entry_count, fallback_title_count
+        for alias, target in sorted(reading_aliases):
+            write_record(mdict_source, alias, f"@@@LINK={target}")
+
+    return entry_count, fallback_title_count, len(reading_aliases)
 
 
 def source_resources(manifest_entry: dict[str, Any]) -> Path:
@@ -463,7 +521,7 @@ def convert_dictionary(
     export_directory: Path,
     output_directory: Path,
     manifest_entry: dict[str, Any],
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     xml_path = export_directory / manifest_entry["output"]
     if not xml_path.is_file():
         raise ConversionError(f"exported XML does not exist: {xml_path}")
@@ -480,7 +538,7 @@ def convert_dictionary(
 
         title = manifest_entry["dictionary"]
         description = dictionary_description(manifest_entry)
-        entry_count, fallback_title_count = write_mdict_source(
+        entry_count, fallback_title_count, reading_alias_count = write_mdict_source(
             xml_path, source_path, resources
         )
         resource_count = copy_display_resources(resources, resource_directory)
@@ -505,7 +563,7 @@ def convert_dictionary(
                 is_mdd=True,
             )
 
-    return entry_count, resource_count, fallback_title_count
+    return entry_count, resource_count, fallback_title_count, reading_alias_count
 
 
 def expected_outputs(
@@ -547,11 +605,15 @@ def convert_all(
             f"[{index}/{len(manifest)}] {item['dictionary']}",
             file=sys.stderr,
         )
-        entry_count, resource_count, fallback_title_count = convert_dictionary(
-            reader, writer, export_directory, output_directory, item
-        )
+        (
+            entry_count,
+            resource_count,
+            fallback_title_count,
+            reading_alias_count,
+        ) = convert_dictionary(reader, writer, export_directory, output_directory, item)
         print(
             f"  packed {entry_count} entries and {resource_count} resources; "
+            f"added {reading_alias_count} Japanese reading aliases; "
             f"recovered {fallback_title_count} empty titles",
             file=sys.stderr,
         )

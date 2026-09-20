@@ -27,8 +27,9 @@ Convert an export directory to MDict `.mdx`/`.mdd` files with
 `./convert_to_mdict.py path/to/export-directory path/to/mdict-directory`
 
 The converter rewrites Apple Dictionary cross-references as MDict `entry://`
-links and packages stylesheets, images, and other display resources into a
-companion `.mdd`. Existing output files require `--force` to replace.
+links, adds kana reading aliases for Japanese entries, and packages stylesheets,
+images, and other display resources into a companion `.mdd`. Existing output
+files require `--force` to replace.
 
 Audit exported XML, configured stylesheets, record references, and anchors
 without packing any files:

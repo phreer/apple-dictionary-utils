@@ -11,8 +11,10 @@ from convert_to_mdict import (
     configured_stylesheets,
     convert_link,
     convert_links,
+    parse_entry_data,
     parse_reference_link,
     stylesheet_links,
+    write_mdict_source,
 )
 
 
@@ -81,6 +83,80 @@ class StylesheetTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ConversionError, "does not exist"):
                 configured_stylesheets(resources)
+
+
+class ReadingAliasTests(unittest.TestCase):
+    def test_extracts_kana_from_japanese_pronunciation_headword(self) -> None:
+        xml = (
+            '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+            'id="entry-1" d:title="私" lang="ja">'
+            '<span d:prn="1" class="hw">わたし <d:prn/></span>'
+            "</d:entry>"
+        )
+        entry = parse_entry_data(xml, Path("Test.xml"), 1)
+        self.assertEqual(entry.reading_aliases, ("わたし",))
+
+    def test_ignores_non_japanese_and_non_kana_headwords(self) -> None:
+        chinese = (
+            '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+            'id="entry-1" d:title="私" lang="zh">'
+            '<span d:prn="1" class="hw">sī</span></d:entry>'
+        )
+        english = (
+            '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+            'id="entry-2" d:title="I" lang="ja">'
+            '<span d:prn="1" class="hw">I</span></d:entry>'
+        )
+        self.assertEqual(
+            parse_entry_data(chinese, Path("Test.xml"), 1).reading_aliases,
+            (),
+        )
+        self.assertEqual(
+            parse_entry_data(english, Path("Test.xml"), 2).reading_aliases,
+            (),
+        )
+
+    def test_writes_redirect_records_for_each_reading_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = root / "Test.dictionary" / "Contents" / "Resources"
+            resources.mkdir(parents=True)
+            xml_path = root / "Test.xml"
+            source_path = root / "Test.txt"
+            xml_path.write_text(
+                '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+                'id="entry-1" d:title="私" lang="ja">'
+                '<span d:prn="1" class="hw">わたし <d:prn/></span></d:entry>\n'
+                '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+                'id="entry-2" d:title="渡し" lang="ja">'
+                '<span d:prn="1" class="hw">わたし <d:prn/></span></d:entry>\n',
+                encoding="utf-8",
+            )
+
+            counts = write_mdict_source(xml_path, source_path, resources)
+            source = source_path.read_text(encoding="utf-8")
+            self.assertEqual(counts, (2, 0, 2))
+            self.assertIn("わたし\n@@@LINK=私", source)
+            self.assertIn("わたし\n@@@LINK=渡し", source)
+
+    def test_skips_alias_that_is_already_a_primary_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            resources = root / "Test.dictionary" / "Contents" / "Resources"
+            resources.mkdir(parents=True)
+            xml_path = root / "Test.xml"
+            source_path = root / "Test.txt"
+            xml_path.write_text(
+                '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+                'id="entry-1" d:title="私" lang="ja">'
+                '<span d:prn="1" class="hw">わたし <d:prn/></span></d:entry>\n'
+                '<d:entry xmlns:d="http://www.apple.com/DTDs/DictionaryService-1.0.rng" '
+                'id="entry-2" d:title="わたし" lang="ja">わたし</d:entry>\n',
+                encoding="utf-8",
+            )
+
+            counts = write_mdict_source(xml_path, source_path, resources)
+            self.assertEqual(counts, (2, 0, 0))
 
 
 class AuditTests(unittest.TestCase):
