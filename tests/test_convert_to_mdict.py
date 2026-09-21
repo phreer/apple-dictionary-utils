@@ -15,6 +15,7 @@ from convert_to_mdict import (
     convert_links,
     parse_entry_data,
     parse_reference_link,
+    read_stylesheet,
     stylesheet_links,
     write_mdict_source,
 )
@@ -96,6 +97,19 @@ class StylesheetTests(unittest.TestCase):
             self.assertNotIn("color: -apple-system-secondary-label", converted)
             self.assertIn("span.oup_label", compatibility)
             self.assertIn("border: 1px solid currentColor", compatibility)
+
+    def test_utf16_stylesheet_is_normalized_to_utf8(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            stylesheet = Path(directory) / "fbm.css"
+            stylesheet.write_bytes(
+                "/* 日本語 */\nspan { color: -apple-system-secondary-label; }".encode(
+                    "utf-16"
+                )
+            )
+
+            css = read_stylesheet(stylesheet)
+            self.assertTrue(css.startswith('@charset "UTF-8";'))
+            self.assertIn("日本語", css)
 
     def test_missing_configured_stylesheet_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

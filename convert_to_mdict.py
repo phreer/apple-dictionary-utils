@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import html
 import json
 import os
@@ -91,6 +92,7 @@ span.oup_label {
   vertical-align: 0.08em;
 }
 """
+CSS_CHARSET = re.compile(r'^@charset\s+["\'][^"\']+["\'];', re.IGNORECASE)
 
 
 class ConversionError(Exception):
@@ -469,6 +471,27 @@ def source_resources(manifest_entry: dict[str, Any]) -> Path:
     return Path(manifest_entry["source"]).parent
 
 
+def read_stylesheet(path: Path) -> str:
+    data = path.read_bytes()
+    if data.startswith((codecs.BOM_UTF32_BE, codecs.BOM_UTF32_LE)):
+        encoding = "utf-32"
+    elif data.startswith((codecs.BOM_UTF16_BE, codecs.BOM_UTF16_LE)):
+        encoding = "utf-16"
+    elif data.startswith(codecs.BOM_UTF8):
+        encoding = "utf-8-sig"
+    else:
+        encoding = "utf-8"
+
+    try:
+        css = data.decode(encoding)
+    except UnicodeDecodeError as error:
+        raise ConversionError(f"unsupported stylesheet encoding: {path}") from error
+
+    if CSS_CHARSET.match(css):
+        return CSS_CHARSET.sub('@charset "UTF-8";', css, count=1)
+    return f'@charset "UTF-8";\n{css}'
+
+
 def copy_display_resources(source: Path, destination: Path) -> int:
     if not source.is_dir():
         return 0
@@ -490,7 +513,7 @@ def copy_display_resources(source: Path, destination: Path) -> int:
         output_path = destination / relative_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if resource.suffix.lower() == ".css":
-            css = resource.read_text(encoding="utf-8")
+            css = read_stylesheet(resource)
             for apple_value, portable_value in APPLE_CSS_REPLACEMENTS.items():
                 css = css.replace(apple_value, portable_value)
             output_path.write_text(css, encoding="utf-8")
