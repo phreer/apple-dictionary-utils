@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.DS_Store
 
 # Local build products and generated dictionary data.
 dedict
