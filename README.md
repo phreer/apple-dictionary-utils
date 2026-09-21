@@ -1,61 +1,57 @@
 # Apple Dictionary Tools
-Tools for extracting data from Apple dictionary files (used by the Dictionary application).
 
-# Usage
-Extract a `Body.data` file into one XML entry per line with the Python tool:
+Python tools for extracting, exporting, and converting macOS Apple Dictionary assets.
 
-`./extract_dictionary.py path/to/Body.data > dictionary.xml`
+## Python Usage
 
-To convert the extracted entries directly to an SQLite database:
+Extract XML from `Body.data`:
 
-`./extract_dictionary.py path/to/Body.data | ./appledict2sqlite3.py`
+```bash
+./extract_dictionary.py path/to/Body.data > dictionary.xml
+```
 
-Export every regular system dictionary to a directory (excluding the localized
-Apple Dictionary glossary):
+Import directly into SQLite:
 
-`./export_system_dictionaries.py path/to/output-directory`
+```bash
+./extract_dictionary.py path/to/Body.data | ./appledict2sqlite3.py
+```
 
-The exporter writes one XML file per dictionary and a `manifest.json` describing
-the source asset, dictionary identifier, entry count, and output size. It refuses
-to replace existing exports unless `--force` is supplied.
+Export the regular system dictionaries:
 
-Convert an export directory to MDict `.mdx`/`.mdd` files with
-[`mdict-utils`](https://github.com/liuyug/mdict-utils):
+```bash
+./export_system_dictionaries.py path/to/output-directory
+```
 
-`python3 -m pip install mdict-utils`
+Convert the export to MDict (install
+[`mdict-utils`](https://github.com/liuyug/mdict-utils) first):
 
-`./convert_to_mdict.py path/to/export-directory path/to/mdict-directory`
+```bash
+python3 -m pip install mdict-utils
+./convert_to_mdict.py path/to/export-directory path/to/mdict-directory
+```
 
-The converter rewrites Apple Dictionary cross-references as MDict `entry://`
-links, adds kana reading aliases for Japanese entries, and packages stylesheets,
-images, and other display resources into a companion `.mdd`. Apple-only system
-colors are translated to portable CSS variables, and a small compatibility
-stylesheet restores semantic labels such as boxed language names in GoldenDict.
-Existing output files require `--force` to replace.
+The converter preserves styles and display resources, rewrites Apple Dictionary
+links, and adds kana aliases for Japanese entries. Use `--force` to replace
+existing output files.
 
-Audit exported XML, configured stylesheets, record references, and anchors
-without packing any files:
+Audit an export:
 
-`./audit_mdict_exports.py path/to/export-directory`
+```bash
+./audit_mdict_exports.py path/to/export-directory
+```
 
-Use `--json` to produce a machine-readable report. The display-compatibility
-findings and prioritized roadmap are documented in
-[`docs/mdict-repair-plan.md`](docs/mdict-repair-plan.md).
+## Legacy C Pipeline
 
-The older C-based pipeline is still available. First compile it with `make`,
-then run
+The old C tools are kept in [`legacy/`](legacy/) for compatibility:
 
-`./dedict path/to/Body.data | ./strip | ./checkxml.py > dictionary.xml`
+```bash
+make -C legacy
+./legacy/dedict path/to/Body.data | ./legacy/strip | ./legacy/checkxml.py > dictionary.xml
+```
 
-or if you want to convert it to sqlite3 database directly
+The Python extractor supersedes this pipeline.
 
-`./dedict path/to/Body.data | ./strip | ./checkxml.py | ./appledict2sqlite3.py`
+## Documentation
 
-which will create a file called `dictionary.db`. The sizes can vary, but on my
-machine I got ~192MB for dictionary.xml and ~250MB dictionary.db. These tools have
-been tested only with the New Oxford American Dictionary but they should work without
-any problems with other dictionaries.
-
-# Code
-Some of the code has been taken from https://gist.github.com/josephg/5e134adf70760ee7e49d
-and modified to fix errors and make it more useful.
+See [`docs/mdict-repair-plan.md`](docs/mdict-repair-plan.md) for MDict display
+compatibility findings and the repair plan.
